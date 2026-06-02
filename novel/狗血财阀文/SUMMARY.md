@@ -6,6 +6,7 @@
 
 ## Chapter Files
 
+- [人物设定](人物设定.md)
 - [简介](chapters/00-简介.md) - source paragraph 1
 - [第一章](chapters/01-第一章.md) - source paragraph 10
 - [第二章](chapters/02-第二章.md) - source paragraph 48
