@@ -2,22 +2,28 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
+from langgraph.types import Command
 
 from novel_agent.graph import build_graph
 from novel_agent.models import ModelConfig, build_model
 from novel_agent.output import write_project
-from novel_agent.state import initial_state
+from novel_agent.state import (
+    DEFAULT_GENRE,
+    DEFAULT_STYLE,
+    initial_state_from_input,
+)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the LangGraph novel agent.")
-    parser.add_argument("--idea", required=True, help="小说核心创意")
-    parser.add_argument("--genre", default="女频、强情绪、爽文", help="类型")
+    parser.add_argument("--idea", default="", help="小说核心创意；continue 模式可留空")
+    parser.add_argument("--genre", default=DEFAULT_GENRE, help="类型")
     parser.add_argument(
         "--style",
-        default="快节奏、强冲突、对白有拉扯、章节结尾有钩子",
+        default=DEFAULT_STYLE,
         help="文风",
     )
     parser.add_argument("--max-chapters", type=int, default=3, help="生成章节数")
@@ -43,6 +49,16 @@ def parse_args():
         default="output",
         help="输出目录，默认写到当前项目的 output",
     )
+    parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help="跳过人工审阅节点，章节生成后自动确认",
+    )
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="保留审阅流程配置，但在 CLI 下自动通过，适合 dry-run 或批量测试",
+    )
     return parser.parse_args()
 
 
@@ -59,18 +75,67 @@ def main():
         )
     )
     app = build_graph(model)
-    state = initial_state(
-        idea=args.idea,
-        genre=args.genre,
-        style=args.style,
-        mode=args.mode,
-        source_dir=args.source_dir,
-        max_chapters=args.max_chapters,
-        words_per_chapter=args.words_per_chapter,
+    state = initial_state_from_input(
+        {
+            "idea": args.idea,
+            "genre": args.genre,
+            "style": args.style,
+            "mode": args.mode,
+            "source_dir": args.source_dir,
+            "max_chapters": args.max_chapters,
+            "words_per_chapter": args.words_per_chapter,
+            "review_required": not args.skip_review,
+            "auto_approve": args.auto_approve or args.dry_run,
+        }
     )
-    result = app.invoke(state)
+    config = {"configurable": {"thread_id": f"cli-{uuid4().hex}"}}
+    result = app.invoke(state, config=config)
+    while "__interrupt__" in result:
+        decision = _prompt_review_decision(result["__interrupt__"])
+        result = app.invoke(Command(resume=decision), config=config)
+
     output_dir = write_project(result, Path(args.output))
     print(f"Done: {output_dir.resolve()}")
+
+
+def _prompt_review_decision(interrupts):
+    review = interrupts[0].value if interrupts else {}
+    chapter = review.get("chapter", "?")
+    print(f"\n=== 第 {chapter} 章人工审阅 ===")
+    _print_block("章节规划", review.get("plan", ""))
+    _print_block("正文", review.get("draft", ""))
+    _print_block("审校意见", review.get("critique", ""))
+
+    while True:
+        action = input("选择操作 [a=approve/r=regenerate/e=edit]: ").strip().lower()
+        if action in {"a", "approve", ""}:
+            return {"action": "approve"}
+        if action in {"r", "regenerate"}:
+            feedback = input("输入重生成反馈（可留空）: ").strip()
+            return {"action": "regenerate", "feedback": feedback}
+        if action in {"e", "edit"}:
+            print("粘贴你修改后的完整正文，单独输入 EOF 结束：")
+            edited_text = _read_multiline_input()
+            if edited_text.strip():
+                return {"action": "edit", "edited_text": edited_text}
+            print("未输入正文，重新选择。")
+            continue
+        print("无效输入，请重新选择。")
+
+
+def _print_block(title: str, content: str):
+    print(f"\n--- {title} ---")
+    print((content or "").strip() or "<empty>")
+
+
+def _read_multiline_input() -> str:
+    lines = []
+    while True:
+        line = input()
+        if line == "EOF":
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
