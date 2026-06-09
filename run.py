@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,18 +21,33 @@ from novel_agent.state import (
 
 
 def parse_args():
+    # 在 argparse 之前先 load_dotenv，让 --model / --provider 的默认值能读到 .env
+    load_dotenv()
+
+    provider_default = os.environ.get("LLM_PROVIDER", "openai").lower()
+    if provider_default not in {"openai", "deepseek"}:
+        provider_default = "openai"
+    model_default = os.environ.get(
+        "NOVEL_AGENT_MODEL",
+        "deepseek-v4-flash" if provider_default == "deepseek" else "gpt-4.1-mini",
+    )
+
     parser = argparse.ArgumentParser(description="Run the LangGraph novel agent.")
     parser.add_argument("--idea", default="", help="小说核心创意；continue 模式可留空")
     parser.add_argument("--genre", default=DEFAULT_GENRE, help="类型")
     parser.add_argument("--style", default=DEFAULT_STYLE, help="文风")
     parser.add_argument("--max-chapters", type=int, default=3, help="生成章节数")
     parser.add_argument("--words-per-chapter", type=int, default=1800, help="每章目标字数")
-    parser.add_argument("--model", default="gpt-4.1-mini", help="OpenAI 模型名")
+    parser.add_argument(
+        "--model",
+        default=model_default,
+        help=f"模型名（默认读 NOVEL_AGENT_MODEL env；当前默认 {model_default}）",
+    )
     parser.add_argument(
         "--provider",
-        default="openai",
+        default=provider_default,
         choices=["openai", "deepseek"],
-        help="模型供应商",
+        help=f"模型供应商（默认读 LLM_PROVIDER env；当前默认 {provider_default}）",
     )
     parser.add_argument("--temperature", type=float, default=0.8, help="生成温度")
     parser.add_argument("--dry-run", action="store_true", help="不用 API key，只验证流程")
@@ -93,7 +109,6 @@ def parse_args():
 
 
 def main():
-    load_dotenv()
     args = parse_args()
 
     model = build_model(
