@@ -4,6 +4,8 @@
   "graphs": {
     "novel_agent": "./novel_agent/studio_graph.py:graph"
   },
-  "env": ".env"
+  "env": ".env",
+  "http": {
+    "app": "./langgraph_server.py:app"
+  }
 }
-

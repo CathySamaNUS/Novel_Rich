@@ -18,6 +18,13 @@ def write_project(state: NovelState, root: Path) -> Path:
     summaries_dir.mkdir(parents=True, exist_ok=True)
 
     (project_dir / "world_bible.md").write_text(state["world_bible"], encoding="utf-8")
+    if state.get("enable_writing_skill"):
+        (project_dir / "shared_writing_skill.md").write_text(
+            state["shared_writing_skill"], encoding="utf-8"
+        )
+        (project_dir / "novel_writing_skill.md").write_text(
+            state["novel_writing_skill"], encoding="utf-8"
+        )
     (project_dir / "characters.md").write_text(state["characters"], encoding="utf-8")
     (project_dir / "character_state.md").write_text(
         state["character_state"], encoding="utf-8"
@@ -36,6 +43,18 @@ def write_project(state: NovelState, root: Path) -> Path:
     )
     (reviews_dir / "latest_critique.md").write_text(latest_critique, encoding="utf-8")
 
+    if state.get("enable_writing_skill") and state.get("approved_skill_updates"):
+        (project_dir / "skill_updates.md").write_text(
+            "\n\n".join(state["approved_skill_updates"]),
+            encoding="utf-8",
+        )
+
+    if state.get("approved_memory_updates"):
+        (project_dir / "memory_updates.md").write_text(
+            "\n\n".join(state["approved_memory_updates"]),
+            encoding="utf-8",
+        )
+
     full = []
     start_index = state["existing_chapters_count"] + 1
     for offset, draft in enumerate(state["approved_drafts"]):
@@ -51,13 +70,15 @@ def write_project(state: NovelState, root: Path) -> Path:
     for offset, critique in enumerate(state["approved_critiques"]):
         chapter_number = start_index + offset
         (reviews_dir / f"{chapter_number:02d}-critique.md").write_text(
-            critique, encoding="utf-8"
+            critique,
+            encoding="utf-8",
         )
 
     for offset, summary in enumerate(state["approved_summaries"]):
         chapter_number = start_index + offset
         (summaries_dir / f"{chapter_number:02d}-summary.md").write_text(
-            summary, encoding="utf-8"
+            summary,
+            encoding="utf-8",
         )
 
     (project_dir / "full_draft.md").write_text("\n\n".join(full), encoding="utf-8")
@@ -66,6 +87,6 @@ def write_project(state: NovelState, root: Path) -> Path:
 
 def slugify(value: str) -> str:
     value = value.strip().lower()
-    value = re.sub(r"[^\w\u4e00-\u9fff]+", "-", value)
+    value = re.sub(r"[^\w一-鿿]+", "-", value)
     value = value.strip("-")
     return value[:80] or "novel"

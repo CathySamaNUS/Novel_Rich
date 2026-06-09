@@ -17,6 +17,35 @@ class DryRunModel:
 
     def invoke(self, prompt: str):
         title = _extract_title(prompt)
+        if "提炼“人设 / 主线记忆”更新建议" in prompt or '提炼"人设 / 主线记忆"更新建议' in prompt:
+            content = (
+                "是否建议更新人设/主线：是\n"
+                "高频偏离模式：\n"
+                "- dry-run 模拟模式\n"
+                "更新理由：dry-run 测试触发链路。\n"
+                "建议写入 characters 的人设修订：\n"
+                "- dry-run 演化补丁：测试用占位人设规则\n"
+                "不应写入 characters 的内容：\n"
+                "- dry-run 临时输出\n"
+                "建议写入 plot_memory 的主线修订：\n"
+                "- dry-run 演化补丁：测试用占位主线规则\n"
+                "不应写入 plot_memory 的内容：\n"
+                "- dry-run 一次性事件"
+            )
+            return type("DryRunResponse", (), {"content": content})()
+        if "任务：基于最近一个批次的章节审校结果" in prompt:
+            content = (
+                "是否建议更新小说特定 skill：否\n"
+                "高频失败模式：\n"
+                "- 无\n"
+                "更新理由：dry-run 不评估真实写作质量，只验证 batch 触发流程。\n"
+                "建议写入单本小说 skill 的规则：\n"
+                "- 无\n"
+                "不应写入单本小说 skill 的内容：\n"
+                "- dry-run 输出不应固化成小说特定长期规则。"
+            )
+            return type("DryRunResponse", (), {"content": content})()
+
         content = (
             f"## {title}\n\n"
             "这是 dry-run 生成内容，用于验证 LangGraph 节点、循环和文件输出。"

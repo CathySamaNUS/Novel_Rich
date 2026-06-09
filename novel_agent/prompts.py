@@ -1,4 +1,11 @@
-SYSTEM_RULES = """
+from __future__ import annotations
+
+from pathlib import Path
+
+
+_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent.parent / "system_prompt.md"
+
+_DEFAULT_SYSTEM_RULES = """
 你是商业网络小说工作流中的专业写作节点。
 
 总原则：
@@ -8,6 +15,24 @@ SYSTEM_RULES = """
 4. 区分“长期稳定设定”和“随剧情变化的状态”。
 5. 中文输出。
 """.strip()
+
+
+def _load_system_rules() -> str:
+    try:
+        if _SYSTEM_PROMPT_PATH.exists():
+            text = _SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+        # 缺文件或文件为空 → 写默认值并返回
+        _SYSTEM_PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _SYSTEM_PROMPT_PATH.write_text(_DEFAULT_SYSTEM_RULES, encoding="utf-8")
+    except OSError:
+        # 只读环境下兜底
+        pass
+    return _DEFAULT_SYSTEM_RULES
+
+
+SYSTEM_RULES = _load_system_rules()
 
 
 def world_prompt(state):
@@ -127,6 +152,7 @@ def bootstrap_plot_memory_prompt(state):
 
 def chapter_plan_prompt(state):
     feedback = _human_feedback_block(state)
+    regenerate_context = _regenerate_context_block(state)
     return f"""
 {SYSTEM_RULES}
 
@@ -140,7 +166,9 @@ def chapter_plan_prompt(state):
 剧情推进记忆：{state["plot_memory"]}
 连续性记录：{state["continuity_notes"]}
 上一章摘要：{state["last_chapter_summary"]}
+{_writing_skill_block(state)}
 {feedback}
+{regenerate_context}
 
 请输出：
 - 本章核心目标
@@ -153,11 +181,15 @@ def chapter_plan_prompt(state):
 
 要求：
 - 这是可直接拿来写正文的执行版章节卡。
+- 如果这是一次重生成，必须先改章节打法，不能只把原稿换个说法重写。
+- 必须逐条覆盖本轮人工反馈里的“必改项”和“强化项”。
+- 如果上一版某个 beat 无法成立，要直接删改，不要硬保留。
 """.strip()
 
 
 def draft_prompt(state):
     feedback = _human_feedback_block(state)
+    regenerate_context = _regenerate_context_block(state)
     return f"""
 {SYSTEM_RULES}
 
@@ -171,7 +203,9 @@ def draft_prompt(state):
 章节规划：{state["current_chapter_plan"]}
 连续性记录：{state["continuity_notes"]}
 上一章摘要：{state["last_chapter_summary"]}
+{_writing_skill_block(state)}
 {feedback}
+{regenerate_context}
 
 写作要求：
 - 直接输出正文，不要解释创作思路。
@@ -179,6 +213,9 @@ def draft_prompt(state):
 - 维持强冲突、强情绪和明确的章节推进。
 - 避免重复解释、概述式流水账、空泛抒情。
 - 严格延续人物称呼、关系、身份、时间线和伏笔状态。
+- 如果这是一次重生成，必须显著改掉上一版的问题，不能只做字面润色。
+- 优先解决本轮人工反馈中的“必改项”，再落实“强化项”。
+- 明确避开本轮“禁止项”，不要重复上一版已经被指出的缺陷。
 - 字数目标：{state["words_per_chapter"]} 字左右。
 """.strip()
 
@@ -192,6 +229,7 @@ def critique_prompt(state):
 人物圣经：{state["characters"]}
 动态人物状态：{state["character_state"]}
 剧情推进记忆：{state["plot_memory"]}
+{_writing_skill_inline(state)}
 章节规划：{state["current_chapter_plan"]}
 最新章节：{state["current_draft"]}
 
@@ -207,6 +245,64 @@ def critique_prompt(state):
 - 本章是否真的推进了剧情而不是原地打转
 - 是否出现设定冲突、关系跳变、信息重复
 - 结尾钩子是否足够让人继续读
+""".strip()
+
+
+def regenerate_brief_prompt(state):
+    return f"""
+{SYSTEM_RULES}
+
+任务：把审校报告压缩成“重生成指导brief”，供作者一键拿去重生成。
+
+{_writing_skill_inline(state)}
+章节规划：{state["current_chapter_plan"]}
+审校报告：{state["current_critique"]}
+
+请输出：
+- 保留项：这一章必须保留的剧情方向或有效部分
+- 必改项：最多 3 条，按优先级排序
+- 强化项：最多 3 条，聚焦情绪、冲突、关系推进、钩子
+- 禁止项：本次重生成不要再出现的问题
+
+要求：
+- 用作者能直接粘贴给模型的口吻写。
+- 不要重复整份审校报告。
+- 总长度尽量控制在 200 字以内。
+""".strip()
+
+
+def skill_reflection_prompt(state):
+    critiques = _recent_critiques_block(state)
+    feedbacks = _recent_feedback_block(state)
+    return f"""
+{SYSTEM_RULES}
+
+任务：基于最近一个批次的章节审校结果，像 SkillOpt 的 batch analyst 一样，提炼“单本小说 skill”更新建议。
+
+{_writing_skill_inline(state)}
+最近批次审校：
+{critiques}
+
+最近批次人工反馈：
+{feedbacks}
+
+请严格按下面格式输出：
+是否建议更新小说特定 skill：是/否
+高频失败模式：
+- <模式 1>
+- <模式 2>
+更新理由：<一句话>
+建议写入单本小说 skill 的规则：
+- <规则 1>
+- <规则 2>
+不应写入单本小说 skill 的内容：
+- <不该固化的局部问题>
+
+要求：
+- 这里只能更新“单本小说特定的写法规则”，不要改通用写作 skill。
+- 只有当最近批次里至少出现重复失败模式，或已经达到失败阈值时，才建议更新。
+- 规则必须能长期服务这一本书，不能把单章情节细节写进去。
+- 建议写入规则最多 3 条。
 """.strip()
 
 
@@ -280,8 +376,130 @@ def update_plot_memory_prompt(state):
 """.strip()
 
 
+def _writing_skill_block(state):
+    if not state.get("enable_writing_skill"):
+        return ""
+
+    shared = (state.get("shared_writing_skill") or "").strip()
+    novel = (state.get("novel_writing_skill") or "").strip()
+    parts = []
+    if shared:
+        parts.append(f"通用写作 skill：\n{shared}")
+    if novel:
+        parts.append(f"单本小说 skill：\n{novel}")
+    return "\n\n".join(parts)
+
+
+def _writing_skill_inline(state):
+    if not state.get("enable_writing_skill"):
+        return ""
+
+    shared = (state.get("shared_writing_skill") or "").strip()
+    novel = (state.get("novel_writing_skill") or "").strip()
+    parts = []
+    if shared:
+        parts.append(f"通用写作 skill：{shared}")
+    if novel:
+        parts.append(f"单本小说 skill：{novel}")
+    return "\n".join(parts)
+
+
+def _recent_critiques_block(state):
+    critiques = state.get("recent_critiques") or []
+    if not critiques:
+        return "无"
+    return "\n\n".join(
+        f"## 批次样本 {idx + 1}\n{item}" for idx, item in enumerate(critiques)
+    )
+
+
+def _recent_feedback_block(state):
+    feedbacks = [
+        item for item in (state.get("recent_human_feedback") or []) if item.strip()
+    ]
+    if not feedbacks:
+        return "无"
+    return "\n".join(f"- {item}" for item in feedbacks)
+
+
 def _human_feedback_block(state):
     feedback = (state.get("current_human_feedback") or "").strip()
     if not feedback:
         return "本轮无额外人工反馈。"
     return f"本轮人工反馈：{feedback}"
+
+
+def _regenerate_context_block(state):
+    if (state.get("current_review_action") or "").strip().lower() != "regenerate":
+        return "本轮不是重生成。"
+
+    previous_draft = _truncate_text(state.get("current_draft") or "", 1800)
+    critique = _truncate_text(state.get("current_critique") or "", 1200)
+    brief = (state.get("current_regenerate_brief") or "").strip()
+
+    return (
+        "这是一次重生成。你必须显式修复上一版缺陷，而不是沿用旧写法。\n"
+        f"上一版正文摘要：{previous_draft or '无'}\n"
+        f"上一版审校要点：{critique or '无'}\n"
+        f"本轮重生成 brief：{brief or '无'}"
+    )
+
+
+def memory_reflection_prompt(state):
+    critiques = _recent_critiques_block(state)
+    feedbacks = _recent_feedback_block(state)
+    forced = bool(state.get("force_memory_flag"))
+    force_block = ""
+    if forced:
+        explicit_feedback = (state.get("current_human_feedback") or "").strip()
+        force_block = (
+            "\n用户明确指出人设/主线存在问题，必须严肃对待，本批次必须建议更新。\n"
+            f"用户当轮反馈：{explicit_feedback or '无'}\n"
+        )
+    return f"""
+{SYSTEM_RULES}
+
+任务：基于最近一个批次的章节审校结果与人工反馈，像 batch analyst 一样，提炼“人设 / 主线记忆”更新建议。
+
+人物圣经（characters）：
+{state["characters"]}
+
+剧情推进记忆（plot_memory）：
+{state["plot_memory"]}
+
+最近批次审校：
+{critiques}
+
+最近批次人工反馈：
+{feedbacks}
+{force_block}
+请严格按下面格式输出：
+是否建议更新人设/主线：是/否
+高频偏离模式：
+- <模式 1>
+- <模式 2>
+更新理由：<一句话>
+建议写入 characters 的人设修订：
+- <修订 1>
+- <修订 2>
+不应写入 characters 的内容：
+- <局部章节细节，不该固化进人设>
+建议写入 plot_memory 的主线修订：
+- <修订 1>
+- <修订 2>
+不应写入 plot_memory 的内容：
+- <一次性事件，不该固化进主线>
+
+要求：
+- characters 修订只能修"长期稳定的人设/动机/关系底盘"，不要写当前章节的临时状态。
+- plot_memory 修订只能修"主线推进/伏笔/必须升级的冲突"，不要写一次性细节。
+- 各部分修订最多 3 条；如果某一部分无修订建议，写"无"。
+- 这是一次"长期记忆纠偏"，不是覆盖既有人设/主线，要可与已有内容兼容。
+""".strip()
+
+
+def _truncate_text(text, limit):
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[:limit] + " ...[truncated]"
